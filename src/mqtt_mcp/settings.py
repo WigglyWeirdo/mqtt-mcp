@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,13 +17,16 @@ class MQTT(BaseModel):
 
 
 class Topic(BaseModel):
-    """An MQTT topic exposed to agents as a pair of resource templates.
+    """An MQTT topic exposed to agents as resource templates.
 
-    Username and password fall back to the global `mqtt` settings when omitted.
+    `type` limits the topic to a single `receive` or `publish` template. When
+    omitted, both templates are registered. Username and password fall back to
+    the global `mqtt` settings when omitted.
     """
 
     name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     topic: str = Field(min_length=1)
+    type: Literal["receive", "publish"] | None = None
     description: str | None = None
     username: str | None = None
     password: str | None = None

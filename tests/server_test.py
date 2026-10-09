@@ -280,3 +280,42 @@ async def test_topic_receive_and_publish_round_trip(isolated_cwd):
         tg.create_task(pub(client))
 
     assert sub.result()[0].text == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (None, {"receive", "publish"}),
+        ("receive", {"receive"}),
+        ("publish", {"publish"}),
+    ],
+)
+async def test_topic_type_limits_templates(isolated_cwd, kind, expected):
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="typed", topic="devices/typed", type=kind))
+
+    async with Client(mcp) as client:
+        uris = {t.uri_template for t in await client.list_resource_templates()}
+
+    registered = {
+        verb
+        for verb in ("receive", "publish")
+        if any(f"mqtt://topics/typed/{verb}" in uri for uri in uris)
+    }
+    assert registered == expected
+
+
+def test_topic_type_from_env(isolated_cwd, monkeypatch):
+    monkeypatch.setenv(
+        "MQTT_MCP_TOPICS",
+        '[{"name":"only_pub","topic":"devices/p","type":"publish"}]',
+    )
+    assert MQTTMCP().settings.topics[0].type == "publish"
+
+
+def test_topic_invalid_type_rejected():
+    with pytest.raises(ValueError):
+        Topic.model_validate(
+            {"name": "bad", "topic": "devices/bad", "type": "subscribe"}
+        )
