@@ -71,6 +71,12 @@ This registers two templates:
 - `mqtt://topics/living_room_temp/receive{?timeout}` receives a message from the topic.
 - `mqtt://topics/living_room_temp/publish/{message*}` publishes a message to the topic.
 
+Set `"type"` to `"receive"` or `"publish"` to register only one of them. Omit it to register both.
+
+```text
+mqtt_mcp_topics='[{"name":"alarm","topic":"devices/alarm","type":"receive"},{"name":"lamp","topic":"devices/lamp/set","type":"publish"}]'
+```
+
 Topics can also be added in code, for example in `server.py` or in your application, before the server starts.
 
 ```python

@@ -63,34 +63,38 @@ class MQTTMCP(FastMCP):
             self.add_topic(topic)
 
     def add_topic(self, topic: Topic) -> None:
-        """Exposes an MQTT topic as receive and publish resource templates.
+        """Exposes an MQTT topic as resource templates.
 
         The templates are named after `topic.name`, for example
         `mqtt://topics/{name}/receive{?timeout}` and
-        `mqtt://topics/{name}/publish/{message*}`. The topic, username and password
-        are passed to the MQTT client on every call; they are never part of the URI.
+        `mqtt://topics/{name}/publish/{message*}`. `topic.type` limits the topic to
+        one of them; by default both are registered. The topic, username and
+        password are passed to the MQTT client on every call; they are never part
+        of the URI.
         """
         if topic.name in self._topics:
             raise ValueError(f"Topic {topic.name!r} is already registered")
         self._topics[topic.name] = topic
 
         description = topic.description or f"MQTT topic {topic.topic!r}"
-        self.add_template(
-            ResourceTemplate.from_function(
-                fn=partial(self._receive_topic, topic),
-                uri_template=f"mqtt://topics/{topic.name}/receive{{?timeout}}",
-                name=f"receive_{topic.name}",
-                description=f"Receive a message. {description}.",
+        if topic.type in (None, "receive"):
+            self.add_template(
+                ResourceTemplate.from_function(
+                    fn=partial(self._receive_topic, topic),
+                    uri_template=f"mqtt://topics/{topic.name}/receive{{?timeout}}",
+                    name=f"receive_{topic.name}",
+                    description=f"Receive a message. {description}.",
+                )
             )
-        )
-        self.add_template(
-            ResourceTemplate.from_function(
-                fn=partial(self._publish_topic, topic),
-                uri_template=f"mqtt://topics/{topic.name}/publish/{{message*}}",
-                name=f"publish_{topic.name}",
-                description=f"Publish a message. {description}.",
+        if topic.type in (None, "publish"):
+            self.add_template(
+                ResourceTemplate.from_function(
+                    fn=partial(self._publish_topic, topic),
+                    uri_template=f"mqtt://topics/{topic.name}/publish/{{message*}}",
+                    name=f"publish_{topic.name}",
+                    description=f"Publish a message. {description}.",
+                )
             )
-        )
 
     async def _receive_topic(self, topic: Topic, timeout: int = 60) -> str:
         return await self.receive_message(
