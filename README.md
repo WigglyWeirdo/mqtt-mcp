@@ -55,6 +55,24 @@ mqtt_mcp_mqtt__host=10.0.0.1
 mqtt_mcp_mqtt__port=1883
 ```
 
+### Browser Clients (CORS)
+
+Browser-based MCP clients on another origin (for example, a web UI served from a different host or port) need CORS. CORS is disabled by default. To allow specific origins, list them in `MQTT_MCP_CORS_ORIGINS` as a JSON list.
+
+```text
+# .env
+mqtt_mcp_cors_origins='["https://ui.example.com:8080"]'
+```
+
+Use the MCP endpoint without a trailing slash (`/mcp`). The `/mcp/` form redirects, and the redirect can point at the internal address. When running behind a reverse proxy, the proxy must forward `/mcp` and keep the `Host` header.
+
+If the server is embedded in your application, pass the same middleware to `run`.
+
+```python
+mcp = MQTTMCP()
+mcp.run(transport="http", middleware=mcp.http_middleware())
+```
+
 ### Topic Resource Templates
 
 Individual topics can be exposed to agents as their own resource templates, so the agent can pick a topic from the list. Each topic gets a receive and a publish template. The topic, username and password are passed to the MQTT client; they are not part of the URI. Username and password fall back to `mqtt_mcp_mqtt__username` and `mqtt_mcp_mqtt__password` when omitted.

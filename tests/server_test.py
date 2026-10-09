@@ -319,3 +319,86 @@ def test_topic_invalid_type_rejected():
         Topic.model_validate(
             {"name": "bad", "topic": "devices/bad", "type": "subscribe"}
         )
+
+
+async def _asgi_request(app, method, path, headers):
+    """Sends one request to an ASGI app and returns (status, lowercased headers)."""
+    messages = []
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers],
+        "server": ("testserver", 80),
+        "client": ("127.0.0.1", 1234),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(scope, receive, send)
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    return start["status"], {
+        k.decode().lower(): v.decode() for k, v in start["headers"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allowed_origin(isolated_cwd, monkeypatch):
+    monkeypatch.setenv("MQTT_MCP_CORS_ORIGINS", '["https://ui.example.com"]')
+    mcp = MQTTMCP()
+    app = mcp.http_app(middleware=mcp.http_middleware())
+
+    status, headers = await _asgi_request(
+        app,
+        "OPTIONS",
+        "/mcp",
+        [
+            ("Origin", "https://ui.example.com"),
+            ("Access-Control-Request-Method", "POST"),
+            ("Access-Control-Request-Headers", "content-type,mcp-protocol-version"),
+        ],
+    )
+
+    assert status == 200
+    assert headers["access-control-allow-origin"] == "https://ui.example.com"
+    assert "POST" in headers["access-control-allow-methods"]
+
+
+@pytest.mark.asyncio
+async def test_cors_rejects_other_origin(isolated_cwd, monkeypatch):
+    monkeypatch.setenv("MQTT_MCP_CORS_ORIGINS", '["https://ui.example.com"]')
+    mcp = MQTTMCP()
+    app = mcp.http_app(middleware=mcp.http_middleware())
+
+    _, headers = await _asgi_request(
+        app,
+        "OPTIONS",
+        "/mcp",
+        [
+            ("Origin", "https://evil.example"),
+            ("Access-Control-Request-Method", "POST"),
+        ],
+    )
+
+    assert "access-control-allow-origin" not in headers
+
+
+def test_http_middleware_empty_without_origins(isolated_cwd):
+    assert MQTTMCP().http_middleware() == []
+
+
+def test_cors_origins_from_env(isolated_cwd, monkeypatch):
+    monkeypatch.setenv(
+        "MQTT_MCP_CORS_ORIGINS", '["https://a.example","https://b.example"]'
+    )
+    assert MQTTMCP().settings.cors_origins == ["https://a.example", "https://b.example"]
