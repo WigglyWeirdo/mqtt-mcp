@@ -42,7 +42,7 @@ async def client(mcp):
 
 @pytest.fixture()
 def cli(monkeypatch):
-    async def dummy_run_async(self, transport, host=None, port=None):
+    async def dummy_run_async(self, transport, host=None, port=None, **kwargs):
         return
 
     monkeypatch.setattr(

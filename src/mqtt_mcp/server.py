@@ -3,6 +3,8 @@ from functools import partial
 from fastmcp import FastMCP
 from fastmcp.prompts import Message
 from fastmcp.resources import ResourceTemplate
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -95,6 +97,25 @@ class MQTTMCP(FastMCP):
                     description=f"Publish a message. {description}.",
                 )
             )
+
+    def http_middleware(self) -> list[Middleware]:
+        """Returns HTTP middleware to pass to `run(transport="http", middleware=...)`.
+
+        CORS is enabled only for the origins in `cors_origins`, so browser clients
+        such as web UIs on other origins can call the server. Without origins, no
+        CORS headers are sent.
+        """
+        if not self.settings.cors_origins:
+            return []
+        return [
+            Middleware(
+                CORSMiddleware,
+                allow_origins=self.settings.cors_origins,
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                allow_headers=["*"],
+                expose_headers=["Mcp-Session-Id"],
+            )
+        ]
 
     async def _receive_topic(self, topic: Topic, timeout: int = 60) -> str:
         return await self.receive_message(

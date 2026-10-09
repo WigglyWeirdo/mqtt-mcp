@@ -16,4 +16,11 @@ def run(
     port: int | None = typer.Option(None, "--port"),
 ):
     server = MQTTMCP()
-    asyncio.run(server.run_async(transport="http", host=host, port=port))
+    asyncio.run(
+        server.run_async(
+            transport="http",
+            host=host,
+            port=port,
+            middleware=server.http_middleware(),
+        )
+    )
