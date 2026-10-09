@@ -1,9 +1,12 @@
 import asyncio
 
 import pytest
+from fastmcp import Client
 from starlette.requests import Request
 
 from mqtt_mcp.mqtt_client import _resolve_host
+from mqtt_mcp.server import MQTTMCP
+from mqtt_mcp.settings import Topic
 
 
 @pytest.mark.asyncio
@@ -142,3 +145,138 @@ def test_resolve_host_unresolvable():
     """_resolve_host should return the original string when resolution fails."""
     result = _resolve_host("this.host.does.not.exist.invalid")
     assert result == "this.host.does.not.exist.invalid"
+
+
+@pytest.fixture()
+def isolated_cwd(tmp_path, monkeypatch):
+    """Run in an empty directory so a developer's .env cannot leak into Settings."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MQTT_MCP_TOPICS", raising=False)
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_add_topic_registers_templates(isolated_cwd):
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="temp", topic="devices/temp", description="Room temp"))
+
+    async with Client(mcp) as client:
+        uris = {t.uri_template for t in await client.list_resource_templates()}
+
+    assert "mqtt://topics/temp/receive{?timeout}" in uris
+    assert "mqtt://topics/temp/publish/{message*}" in uris
+
+
+def test_add_topic_duplicate_raises(isolated_cwd):
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="temp", topic="devices/temp"))
+    with pytest.raises(ValueError):
+        mcp.add_topic(Topic(name="temp", topic="devices/other"))
+
+
+@pytest.mark.asyncio
+async def test_topics_from_env(isolated_cwd, monkeypatch):
+    monkeypatch.setenv(
+        "MQTT_MCP_TOPICS",
+        '[{"name":"env_temp","topic":"devices/+/temp","username":"u","password":"p"}]',
+    )
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        uris = {t.uri_template for t in await client.list_resource_templates()}
+
+    assert "mqtt://topics/env_temp/receive{?timeout}" in uris
+    assert "mqtt://topics/env_temp/publish/{message*}" in uris
+
+
+@pytest.mark.asyncio
+async def test_topic_templates_pass_topic_and_credentials(isolated_cwd, monkeypatch):
+    """Topic, username and password from the topic definition reach the MQTT client."""
+    calls = []
+
+    class FakeMQTTClient:
+        def __init__(self, host, port, username=None, password=None):
+            self.args = (host, port, username, password)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def receive(self, topic, timeout=60, qos=1):
+            calls.append(("receive", self.args, topic, timeout))
+            return "payload"
+
+        async def publish(self, topic, message, qos=1):
+            calls.append(("publish", self.args, topic, message))
+
+    monkeypatch.setattr("mqtt_mcp.server.AsyncMQTTClient", FakeMQTTClient)
+
+    mcp = MQTTMCP()
+    mcp.add_topic(
+        Topic(
+            name="secure", topic="devices/secure", username="sensor", password="s3cret"
+        )
+    )
+
+    async with Client(mcp) as client:
+        received = await client.read_resource("mqtt://topics/secure/receive?timeout=7")
+        await client.read_resource("mqtt://topics/secure/publish/hello")
+
+    assert received[0].text == "payload"
+    assert calls == [
+        ("receive", ("127.0.0.1", 1883, "sensor", "s3cret"), "devices/secure", 7),
+        ("publish", ("127.0.0.1", 1883, "sensor", "s3cret"), "devices/secure", "hello"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_topic_templates_fall_back_to_global_credentials(
+    isolated_cwd, monkeypatch
+):
+    monkeypatch.setenv("MQTT_MCP_MQTT__USERNAME", "gateway")
+    monkeypatch.setenv("MQTT_MCP_MQTT__PASSWORD", "g4teway")
+    calls = []
+
+    class FakeMQTTClient:
+        def __init__(self, host, port, username=None, password=None):
+            calls.append((host, port, username, password))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def publish(self, topic, message, qos=1):
+            calls.append(topic)
+
+    monkeypatch.setattr("mqtt_mcp.server.AsyncMQTTClient", FakeMQTTClient)
+
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="plain", topic="devices/plain"))
+
+    async with Client(mcp) as client:
+        await client.read_resource("mqtt://topics/plain/publish/hi")
+
+    assert calls == [("127.0.0.1", 1883, "gateway", "g4teway"), "devices/plain"]
+
+
+@pytest.mark.asyncio
+async def test_topic_receive_and_publish_round_trip(isolated_cwd):
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="roundtrip", topic="devices/roundtrip"))
+    message = '{"status":"on"}'
+
+    async def pub(client):
+        await asyncio.sleep(1.0)
+        await client.read_resource(f"mqtt://topics/roundtrip/publish/{message}")
+
+    async with Client(mcp) as client, asyncio.TaskGroup() as tg:
+        sub = tg.create_task(
+            client.read_resource("mqtt://topics/roundtrip/receive?timeout=3")
+        )
+        tg.create_task(pub(client))
+
+    assert sub.result()[0].text == message
