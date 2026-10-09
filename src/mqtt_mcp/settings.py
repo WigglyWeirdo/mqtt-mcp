@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,9 +14,23 @@ class MQTT(BaseModel):
     password: str | None = None
 
 
+class Topic(BaseModel):
+    """An MQTT topic exposed to agents as a pair of resource templates.
+
+    Username and password fall back to the global `mqtt` settings when omitted.
+    """
+
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    topic: str = Field(min_length=1)
+    description: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
 class Settings(BaseSettings):
     auth: Auth = Auth()
     mqtt: MQTT = MQTT()
+    topics: list[Topic] = []
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -55,6 +55,34 @@ mqtt_mcp_mqtt__host=10.0.0.1
 mqtt_mcp_mqtt__port=1883
 ```
 
+### Topic Resource Templates
+
+Individual topics can be exposed to agents as their own resource templates, so the agent can pick a topic from the list. Each topic gets a receive and a publish template. The topic, username and password are passed to the MQTT client; they are not part of the URI. Username and password fall back to `mqtt_mcp_mqtt__username` and `mqtt_mcp_mqtt__password` when omitted.
+
+Topics are defined in the `.env` file as a JSON list. Use single quotes so the JSON is read as one value.
+
+```text
+# .env
+mqtt_mcp_topics='[{"name":"living_room_temp","topic":"devices/living-room/temperature","description":"Living room temperature","username":"sensor","password":"s3cret"}]'
+```
+
+This registers two templates:
+
+- `mqtt://topics/living_room_temp/receive{?timeout}` receives a message from the topic.
+- `mqtt://topics/living_room_temp/publish/{message*}` publishes a message to the topic.
+
+Topics can also be added in code, for example in `server.py` or in your application, before the server starts.
+
+```python
+from mqtt_mcp.server import MQTTMCP
+from mqtt_mcp.settings import Topic
+
+mcp = MQTTMCP()
+mcp.add_topic(
+    Topic(name="thermostat", topic="devices/thermostat/set", username="hvac", password="...")
+)
+```
+
 ### MCP Inspector
 
 To confirm the server is up and running and explore available resources and tools, run the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) and connect it to the MQTT MCP server at `http://127.0.0.1:8000/mcp/`. Make sure to set the transport to `Streamable HTTP`.

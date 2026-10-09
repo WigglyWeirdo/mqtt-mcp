@@ -1,3 +1,5 @@
+from functools import partial
+
 from fastmcp import FastMCP
 from fastmcp.prompts import Message
 from fastmcp.resources import ResourceTemplate
@@ -5,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from mqtt_mcp.mqtt_client import AsyncMQTTClient
-from mqtt_mcp.settings import Settings
+from mqtt_mcp.settings import Settings, Topic
 
 
 class MQTTMCP(FastMCP):
@@ -55,6 +57,56 @@ class MQTTMCP(FastMCP):
         self.prompt(self.mqtt_help, name="mqtt_help", tags={"mqtt", "help"})
 
         self.custom_route("/health", methods=["GET"])(self.health_check)
+
+        self._topics: dict[str, Topic] = {}
+        for topic in self.settings.topics:
+            self.add_topic(topic)
+
+    def add_topic(self, topic: Topic) -> None:
+        """Exposes an MQTT topic as receive and publish resource templates.
+
+        The templates are named after `topic.name`, for example
+        `mqtt://topics/{name}/receive{?timeout}` and
+        `mqtt://topics/{name}/publish/{message*}`. The topic, username and password
+        are passed to the MQTT client on every call; they are never part of the URI.
+        """
+        if topic.name in self._topics:
+            raise ValueError(f"Topic {topic.name!r} is already registered")
+        self._topics[topic.name] = topic
+
+        description = topic.description or f"MQTT topic {topic.topic!r}"
+        self.add_template(
+            ResourceTemplate.from_function(
+                fn=partial(self._receive_topic, topic),
+                uri_template=f"mqtt://topics/{topic.name}/receive{{?timeout}}",
+                name=f"receive_{topic.name}",
+                description=f"Receive a message. {description}.",
+            )
+        )
+        self.add_template(
+            ResourceTemplate.from_function(
+                fn=partial(self._publish_topic, topic),
+                uri_template=f"mqtt://topics/{topic.name}/publish/{{message*}}",
+                name=f"publish_{topic.name}",
+                description=f"Publish a message. {description}.",
+            )
+        )
+
+    async def _receive_topic(self, topic: Topic, timeout: int = 60) -> str:
+        return await self.receive_message(
+            topic.topic,
+            username=topic.username,
+            password=topic.password,
+            timeout=timeout,
+        )
+
+    async def _publish_topic(self, topic: Topic, message: str) -> str:
+        return await self.publish_message(
+            topic.topic,
+            message,
+            username=topic.username,
+            password=topic.password,
+        )
 
     async def receive_message(
         self,
