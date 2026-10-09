@@ -64,6 +64,58 @@ class MQTTMCP(FastMCP):
         for topic in self.settings.topics:
             self.add_topic(topic)
 
+        self._tool_names: set[str] = {"receive_message", "publish_message"}
+        for topic in self.settings.tools:
+            self.add_topic_tool(topic)
+
+    def add_topic_tool(self, topic: Topic) -> None:
+        """Exposes an MQTT topic as MCP tools that need no connection details.
+
+        With `topic.type` set, a single tool named `topic.name` is registered. The
+        publish tool takes only `message`, and the receive tool takes an optional
+        `timeout`. Without `type`, a `{name}_receive` and a `{name}_publish` tool
+        are registered. The topic, username and password are fixed by the
+        configuration and are never exposed to the AI.
+        """
+        kinds = (topic.type,) if topic.type else ("receive", "publish")
+        description = topic.description or f"MQTT topic {topic.topic!r}"
+        for kind in kinds:
+            name = topic.name if topic.type else f"{topic.name}_{kind}"
+            if name in self._tool_names:
+                raise ValueError(f"Tool {name!r} is already registered")
+            self._tool_names.add(name)
+
+            if kind == "receive":
+
+                async def receive(timeout: int = 60) -> str:
+                    return await self._receive_topic(topic, timeout)
+
+                self.tool(
+                    receive,
+                    name=name,
+                    description=f"Receive a message. {description}.",
+                    annotations={
+                        "title": f"Receive from {topic.topic}",
+                        "readOnlyHint": True,
+                        "openWorldHint": True,
+                    },
+                )
+            else:
+
+                async def publish(message: str) -> str:
+                    return await self._publish_topic(topic, message)
+
+                self.tool(
+                    publish,
+                    name=name,
+                    description=f"Publish a message. {description}.",
+                    annotations={
+                        "title": f"Publish to {topic.topic}",
+                        "readOnlyHint": False,
+                        "openWorldHint": True,
+                    },
+                )
+
     def add_topic(self, topic: Topic) -> None:
         """Exposes an MQTT topic as resource templates.
 

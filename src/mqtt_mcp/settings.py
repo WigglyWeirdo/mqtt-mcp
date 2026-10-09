@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     auth: Auth = Auth()
     mqtt: MQTT = MQTT()
     topics: list[Topic] = []
+    tools: list[Topic] = []
     cors_origins: list[str] = []
     model_config = SettingsConfigDict(
         env_file=".env",

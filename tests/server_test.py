@@ -402,3 +402,91 @@ def test_cors_origins_from_env(isolated_cwd, monkeypatch):
         "MQTT_MCP_CORS_ORIGINS", '["https://a.example","https://b.example"]'
     )
     assert MQTTMCP().settings.cors_origins == ["https://a.example", "https://b.example"]
+
+
+@pytest.mark.asyncio
+async def test_topic_tool_exposes_only_message(isolated_cwd, monkeypatch):
+    monkeypatch.setenv(
+        "MQTT_MCP_TOOLS",
+        '[{"name":"PTZ_control_backyard","topic":"frigate/camera/ptz",'
+        '"description":"Move a camera","username":"user","password":"pw",'
+        '"type":"publish"}]',
+    )
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+
+    assert set(tools) >= {"PTZ_control_backyard"}
+    schema = tools["PTZ_control_backyard"].input_schema
+    assert set(schema["properties"]) == {"message"}
+    assert tools["PTZ_control_backyard"].description.startswith("Publish a message.")
+    assert tools["PTZ_control_backyard"].annotations.read_only_hint is False
+
+
+@pytest.mark.asyncio
+async def test_topic_tool_without_type_registers_both(isolated_cwd):
+    mcp = MQTTMCP()
+    mcp.add_topic_tool(Topic(name="lamp", topic="devices/lamp"))
+
+    async with Client(mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert {"lamp_receive", "lamp_publish"} <= names
+
+
+@pytest.mark.asyncio
+async def test_topic_tool_call_passes_topic_and_credentials(isolated_cwd, monkeypatch):
+    calls = []
+
+    class FakeMQTTClient:
+        def __init__(self, host, port, username=None, password=None):
+            self.args = (host, port, username, password)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def receive(self, topic, timeout=60, qos=1):
+            calls.append(("receive", self.args, topic, timeout))
+            return "payload"
+
+        async def publish(self, topic, message, qos=1):
+            calls.append(("publish", self.args, topic, message))
+
+    monkeypatch.setattr("mqtt_mcp.server.AsyncMQTTClient", FakeMQTTClient)
+
+    mcp = MQTTMCP()
+    mcp.add_topic_tool(
+        Topic(
+            name="ptz",
+            topic="frigate/camera/ptz",
+            type="publish",
+            username="user",
+            password="pw",
+        )
+    )
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("ptz", {"message": '{"pan":10}'})
+
+    assert "succeeded" in result.content[0].text
+    assert calls == [
+        (
+            "publish",
+            ("127.0.0.1", 1883, "user", "pw"),
+            "frigate/camera/ptz",
+            '{"pan":10}',
+        )
+    ]
+
+
+def test_topic_tool_duplicate_name_raises(isolated_cwd):
+    mcp = MQTTMCP()
+    mcp.add_topic_tool(Topic(name="dup", topic="a", type="publish"))
+    with pytest.raises(ValueError):
+        mcp.add_topic_tool(Topic(name="dup", topic="b", type="publish"))
+    with pytest.raises(ValueError):
+        mcp.add_topic_tool(Topic(name="publish_message", topic="c", type="publish"))
