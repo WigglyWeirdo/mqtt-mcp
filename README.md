@@ -55,6 +55,22 @@ mqtt_mcp_mqtt__host=10.0.0.1
 mqtt_mcp_mqtt__port=1883
 ```
 
+### Topic Tools
+
+Topics can also be exposed as MCP tools. A tool takes only what the AI needs to supply, such as a message. The topic, username and password come from the configuration.
+
+Define tools in `.env` as a JSON list in `MQTT_MCP_TOOLS`. The entries use the same format as topics.
+
+```text
+# .env
+mqtt_mcp_tools='[{"name":"PTZ_control_backyard","topic":"frigate/camera/ptz","description":"Move a camera","username":"user","password":"...","type":"publish"}]'
+```
+
+- With `"type"` set to `"publish"` or `"receive"`, one tool is registered under `name`. The publish tool takes a `message` argument. The receive tool takes an optional `timeout`.
+- Without `"type"`, two tools are registered: `{name}_receive` and `{name}_publish`.
+
+Tools can also be added in code with `mcp.add_topic_tool(Topic(...))`.
+
 ### Browser Clients (CORS)
 
 Browser-based MCP clients on another origin (for example, a web UI served from a different host or port) need CORS. CORS is disabled by default. To allow specific origins, list them in `MQTT_MCP_CORS_ORIGINS` as a JSON list.
