@@ -71,6 +71,10 @@ mqtt_mcp_tools='[{"name":"PTZ_control_backyard","topic":"frigate/camera/ptz","de
 
 Tools can also be added in code with `mcp.add_topic_tool(Topic(...))`.
 
+### Binary Messages
+
+Messages that are not UTF-8 text are handled as follows. JPEG payloads are returned as an image: an image content block for tools, and an `image/jpeg` blob for resources. Other binary payloads return an error.
+
 ### Browser Clients (CORS)
 
 Browser-based MCP clients on another origin (for example, a web UI served from a different host or port) need CORS. CORS is disabled by default. To allow specific origins, list them in `MQTT_MCP_CORS_ORIGINS` as a JSON list.

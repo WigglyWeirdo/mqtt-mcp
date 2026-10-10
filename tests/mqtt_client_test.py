@@ -153,8 +153,10 @@ async def test_receive_restores_callbacks_on_subscribe_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_receive_invalid_utf8_raises(monkeypatch):
+async def test_receive_binary_payload_returned_as_bytes(monkeypatch):
+    """Payloads that aren't UTF-8 (e.g. JPEG) are returned unchanged as bytes."""
     client = AsyncMQTTClient("127.0.0.1")
+    payload = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 
     def subscribe(topic, qos=1):
         return mqtt.MQTT_ERR_SUCCESS, 1
@@ -173,8 +175,8 @@ async def test_receive_invalid_utf8_raises(monkeypatch):
                 "Message",
                 (),
                 {
-                    "topic": "devices/1/data",
-                    "payload": b"\xff",
+                    "topic": "devices/1/camera",
+                    "payload": payload,
                 },
             )(),
         )
@@ -192,5 +194,4 @@ async def test_receive_invalid_utf8_raises(monkeypatch):
 
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
-    with pytest.raises(UnicodeDecodeError):
-        await client.receive("devices/+/data")
+    assert await client.receive("devices/+/camera") == payload
