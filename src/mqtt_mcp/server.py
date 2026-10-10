@@ -2,7 +2,8 @@ from functools import partial
 
 from fastmcp import FastMCP
 from fastmcp.prompts import Message
-from fastmcp.resources import ResourceTemplate
+from fastmcp.resources import ResourceContent, ResourceResult, ResourceTemplate
+from fastmcp.utilities.types import Image
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -10,6 +11,26 @@ from starlette.responses import JSONResponse
 
 from mqtt_mcp.mqtt_client import AsyncMQTTClient
 from mqtt_mcp.settings import Settings, Topic
+
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _tool_payload(payload: str | bytes) -> str | Image:
+    """Returns text as-is and a JPEG payload as image content for a tool result."""
+    if isinstance(payload, str):
+        return payload
+    if payload.startswith(JPEG_MAGIC):
+        return Image(data=payload, format="jpeg")
+    raise ValueError("Message is neither UTF-8 text nor JPEG")
+
+
+def _resource_payload(payload: str | bytes) -> str | ResourceResult:
+    """Returns text as-is and a JPEG payload as an image/jpeg resource."""
+    if isinstance(payload, str):
+        return payload
+    if payload.startswith(JPEG_MAGIC):
+        return ResourceResult([ResourceContent(payload, mime_type="image/jpeg")])
+    raise ValueError("Message is neither UTF-8 text nor JPEG")
 
 
 class MQTTMCP(FastMCP):
@@ -33,7 +54,7 @@ class MQTTMCP(FastMCP):
 
         self.add_template(
             ResourceTemplate.from_function(
-                fn=self.receive_message, uri_template="mqtt://{host}:{port}/{topic*}"
+                fn=self.receive_resource, uri_template="mqtt://{host}:{port}/{topic*}"
             )
         )
 
@@ -87,8 +108,8 @@ class MQTTMCP(FastMCP):
 
             if kind == "receive":
 
-                async def receive(timeout: int = 60) -> str:
-                    return await self._receive_topic(topic, timeout)
+                async def receive(timeout: int = 60) -> str | Image:
+                    return _tool_payload(await self._receive_topic(topic, timeout))
 
                 self.tool(
                     receive,
@@ -134,7 +155,7 @@ class MQTTMCP(FastMCP):
         if topic.type in (None, "receive"):
             self.add_template(
                 ResourceTemplate.from_function(
-                    fn=partial(self._receive_topic, topic),
+                    fn=partial(self._receive_topic_resource, topic),
                     uri_template=f"mqtt://topics/{topic.name}/receive{{?timeout}}",
                     name=f"receive_{topic.name}",
                     description=f"Receive a message. {description}.",
@@ -169,13 +190,18 @@ class MQTTMCP(FastMCP):
             )
         ]
 
-    async def _receive_topic(self, topic: Topic, timeout: int = 60) -> str:
-        return await self.receive_message(
+    async def _receive_topic(self, topic: Topic, timeout: int = 60) -> str | bytes:
+        return await self._receive(
             topic.topic,
             username=topic.username,
             password=topic.password,
             timeout=timeout,
         )
+
+    async def _receive_topic_resource(
+        self, topic: Topic, timeout: int = 60
+    ) -> str | ResourceResult:
+        return _resource_payload(await self._receive_topic(topic, timeout))
 
     async def _publish_topic(self, topic: Topic, message: str) -> str:
         return await self.publish_message(
@@ -185,6 +211,23 @@ class MQTTMCP(FastMCP):
             password=topic.password,
         )
 
+    async def _receive(
+        self,
+        topic: str,
+        host: str | None = None,
+        port: int | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: int = 60,
+    ) -> str | bytes:
+        async with AsyncMQTTClient(
+            host if host is not None else self.settings.mqtt.host,
+            port if port is not None else self.settings.mqtt.port,
+            username if username is not None else self.settings.mqtt.username,
+            password if password is not None else self.settings.mqtt.password,
+        ) as client:
+            return await client.receive(topic, timeout)
+
     async def receive_message(
         self,
         topic: str,
@@ -193,15 +236,28 @@ class MQTTMCP(FastMCP):
         username: str | None = None,
         password: str | None = None,
         timeout: int = 60,
-    ) -> str:
-        """Receives a message published to the specified topic, if any."""
-        async with AsyncMQTTClient(
-            host if host is not None else self.settings.mqtt.host,
-            port if port is not None else self.settings.mqtt.port,
-            username if username is not None else self.settings.mqtt.username,
-            password if password is not None else self.settings.mqtt.password,
-        ) as client:
-            return await client.receive(topic, timeout)
+    ) -> str | Image:
+        """Receives a message published to the specified topic, if any.
+
+        JPEG images are returned as image content.
+        """
+        return _tool_payload(
+            await self._receive(topic, host, port, username, password, timeout)
+        )
+
+    async def receive_resource(
+        self,
+        topic: str,
+        host: str | None = None,
+        port: int | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: int = 60,
+    ) -> str | ResourceResult:
+        """Resource form of receive_message. JPEG images are returned as image/jpeg."""
+        return _resource_payload(
+            await self._receive(topic, host, port, username, password, timeout)
+        )
 
     async def publish_message(
         self,

@@ -1,7 +1,11 @@
 import asyncio
+import base64
+import threading
+import time
 
 import pytest
 from fastmcp import Client
+from paho.mqtt import publish
 from starlette.requests import Request
 
 from mqtt_mcp.mqtt_client import _resolve_host
@@ -490,3 +494,96 @@ def test_topic_tool_duplicate_name_raises(isolated_cwd):
         mcp.add_topic_tool(Topic(name="dup", topic="b", type="publish"))
     with pytest.raises(ValueError):
         mcp.add_topic_tool(Topic(name="publish_message", topic="c", type="publish"))
+
+
+JPEG_PAYLOAD = (
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+)
+
+
+def _fake_jpeg_client(monkeypatch, payload=JPEG_PAYLOAD):
+    class FakeMQTTClient:
+        def __init__(self, host, port, username=None, password=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def receive(self, topic, timeout=60, qos=1):
+            return payload
+
+    monkeypatch.setattr("mqtt_mcp.server.AsyncMQTTClient", FakeMQTTClient)
+
+
+@pytest.mark.asyncio
+async def test_receive_jpeg_tool_returns_image(isolated_cwd, monkeypatch):
+    _fake_jpeg_client(monkeypatch)
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("receive_message", {"topic": "cam/front"})
+
+    content = result.content[0]
+    assert content.type == "image"
+    assert content.mime_type == "image/jpeg"
+    assert base64.b64decode(content.data) == JPEG_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_receive_jpeg_resource_returns_blob(isolated_cwd, monkeypatch):
+    _fake_jpeg_client(monkeypatch)
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        contents = await client.read_resource("mqtt://127.0.0.1:1883/cam/front")
+
+    assert contents[0].mime_type == "image/jpeg"
+    assert base64.b64decode(contents[0].blob) == JPEG_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_receive_topic_template_returns_jpeg(isolated_cwd, monkeypatch):
+    _fake_jpeg_client(monkeypatch)
+    mcp = MQTTMCP()
+    mcp.add_topic(Topic(name="camera", topic="devices/camera", type="receive"))
+
+    async with Client(mcp) as client:
+        contents = await client.read_resource("mqtt://topics/camera/receive")
+
+    assert contents[0].mime_type == "image/jpeg"
+    assert base64.b64decode(contents[0].blob) == JPEG_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_receive_unsupported_binary_errors(isolated_cwd, monkeypatch):
+    _fake_jpeg_client(monkeypatch, payload=b"\xfe\xfd\x00")
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        with pytest.raises(Exception, match="neither UTF-8 text nor JPEG"):
+            await client.call_tool("receive_message", {"topic": "cam/front"})
+
+
+@pytest.mark.asyncio
+async def test_receive_jpeg_from_broker(isolated_cwd):
+    """A JPEG published to the real broker is received intact through the tool."""
+    mcp = MQTTMCP()
+
+    def pub():
+        time.sleep(1.0)
+        publish.single("devices/jpeg-test", JPEG_PAYLOAD, hostname="127.0.0.1")
+
+    async with Client(mcp) as client:
+        thread = threading.Thread(target=pub)
+        thread.start()
+        result = await client.call_tool(
+            "receive_message",
+            {"topic": "devices/jpeg-test", "host": "127.0.0.1", "timeout": 5},
+        )
+        thread.join()
+
+    assert result.content[0].type == "image"
+    assert base64.b64decode(result.content[0].data) == JPEG_PAYLOAD

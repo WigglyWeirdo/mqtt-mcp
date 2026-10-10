@@ -99,9 +99,10 @@ class AsyncMQTTClient:
         self.client.disconnect()
         self.client.loop_stop()
 
-    async def receive(self, topic: str, timeout: int = 60, qos: int = 1) -> str:
+    async def receive(self, topic: str, timeout: int = 60, qos: int = 1) -> str | bytes:
+        """Returns the next matching message as text, or as raw bytes if it isn't UTF-8."""
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        future: asyncio.Future[str | bytes] = loop.create_future()
 
         # Store original message callback if it exists
         original_on_message = getattr(self.client, "on_message", None)
@@ -110,12 +111,13 @@ class AsyncMQTTClient:
         def on_message(client, userdata, message):
             # Check if this message matches our topic
             if mqtt.topic_matches_sub(topic, message.topic) and not future.done():
+                # Binary payloads such as JPEG images are passed through unchanged
+                payload: str | bytes
                 try:
-                    message_str = message.payload.decode()
-                    loop.call_soon_threadsafe(future.set_result, message_str)
-                except UnicodeDecodeError as e:
-                    if not future.done():
-                        loop.call_soon_threadsafe(future.set_exception, e)
+                    payload = message.payload.decode()
+                except UnicodeDecodeError:
+                    payload = message.payload
+                loop.call_soon_threadsafe(future.set_result, payload)
             # Call original callback if it exists (for chaining)
             elif original_on_message:
                 original_on_message(client, userdata, message)
