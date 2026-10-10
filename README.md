@@ -59,15 +59,26 @@ mqtt_mcp_mqtt__port=1883
 
 Topics can also be exposed as MCP tools. A tool takes only what the AI needs to supply, such as a message. The topic, username and password come from the configuration.
 
-Define tools in `.env` as a JSON list in `MQTT_MCP_TOOLS`. The entries use the same format as topics.
+Put tools in `mqtt_mcp_tools.json` in the working directory. The file holds a JSON list, and each entry uses the same format as a topic. Use this file when you have more than one tool. Repeating `mqtt_mcp_tools=` in `.env` silently keeps only the last line, so don't do that.
 
-```text
-# .env
-mqtt_mcp_tools='[{"name":"PTZ_control_backyard","topic":"frigate/camera/ptz","description":"Move a camera","username":"user","password":"...","type":"publish"}]'
+```json
+[
+  {
+    "name": "PTZ_control_backyard",
+    "topic": "frigate/camera/ptz",
+    "description": "Move a camera",
+    "username": "user",
+    "password": "...",
+    "type": "publish"
+  },
+  {"name": "Garage_door", "topic": "devices/garage/set", "type": "publish"}
+]
 ```
 
 - With `"type"` set to `"publish"` or `"receive"`, one tool is registered under `name`. The publish tool takes a `message` argument. The receive tool takes an optional `timeout`.
 - Without `"type"`, two tools are registered: `{name}_receive` and `{name}_publish`.
+- A single tool can also be set in `.env` as `mqtt_mcp_tools='[...]'`. Tools from `.env` and from the file are both registered, and a duplicate name is an error at startup.
+- Use `MQTT_MCP_TOOLS_FILE` to point at a different file.
 
 Tools can also be added in code with `mcp.add_topic_tool(Topic(...))`.
 

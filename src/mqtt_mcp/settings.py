@@ -1,6 +1,7 @@
+from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     mqtt: MQTT = MQTT()
     topics: list[Topic] = []
     tools: list[Topic] = []
+    tools_file: Path = Path("mqtt_mcp_tools.json")
     cors_origins: list[str] = []
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -44,3 +46,20 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         env_prefix="MQTT_MCP_",
     )
+
+    @model_validator(mode="after")
+    def load_tools_file(self) -> "Settings":
+        """Adds the tools in `tools_file`, when it exists, to those from the environment.
+
+        A JSON list is used because repeating `MQTT_MCP_TOOLS` in `.env` silently keeps
+        only the last value.
+        """
+        if self.tools_file.is_file():
+            try:
+                file_tools = TypeAdapter(list[Topic]).validate_json(
+                    self.tools_file.read_bytes()
+                )
+            except ValidationError as e:
+                raise ValueError(f"Invalid tools file {self.tools_file}: {e}") from e
+            self.tools = [*self.tools, *file_tools]
+        return self
