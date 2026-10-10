@@ -587,3 +587,52 @@ async def test_receive_jpeg_from_broker(isolated_cwd):
 
     assert result.content[0].type == "image"
     assert base64.b64decode(result.content[0].data) == JPEG_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_tools_file_registers_every_tool(isolated_cwd):
+    (isolated_cwd / "mqtt_mcp_tools.json").write_text(
+        '[{"name":"ptz_backyard","topic":"frigate/camera/ptz","type":"publish"},'
+        '{"name":"lamp","topic":"devices/lamp/set","type":"publish"}]'
+    )
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert {"ptz_backyard", "lamp"} <= names
+
+
+@pytest.mark.asyncio
+async def test_tools_file_combines_with_env(isolated_cwd, monkeypatch):
+    (isolated_cwd / "mqtt_mcp_tools.json").write_text(
+        '[{"name":"from_file","topic":"a/b","type":"publish"}]'
+    )
+    monkeypatch.setenv(
+        "MQTT_MCP_TOOLS", '[{"name":"from_env","topic":"c/d","type":"publish"}]'
+    )
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert {"from_file", "from_env"} <= names
+
+
+@pytest.mark.asyncio
+async def test_tools_file_custom_path(isolated_cwd, monkeypatch):
+    path = isolated_cwd / "elsewhere.json"
+    path.write_text('[{"name":"custom_path_tool","topic":"x/y","type":"publish"}]')
+    monkeypatch.setenv("MQTT_MCP_TOOLS_FILE", str(path))
+    mcp = MQTTMCP()
+
+    async with Client(mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert "custom_path_tool" in names
+
+
+def test_tools_file_invalid_json_names_file(isolated_cwd):
+    (isolated_cwd / "mqtt_mcp_tools.json").write_text("[{not json")
+    with pytest.raises(ValueError, match="Invalid tools file"):
+        MQTTMCP()
